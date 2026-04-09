@@ -1,0 +1,325 @@
+# SexyFingers — Full Godot 4 Android Plugin
+
+A unified messaging and calling plugin with guarded numbers, agent-ready automation, and safe defaults.
+
+* Share text (chooser → SMS / WhatsApp / etc.)
+* Open SMS with number + message (or direct send)
+* Open WhatsApp chat directly
+* Open dialer or make direct calls
+* Guarded numbers — unauthorized numbers are blocked
+
+---
+
+# Folder Structure
+
+```
+android/plugins/SexyFingers/
+├── build.gradle
+├── src/
+│   └── main/
+│       ├── AndroidManifest.xml
+│       └── java/com/example/sexyfingers/SexyFingersPlugin.java
+```
+
+---
+
+# 1. `build.gradle`
+
+```gradle
+plugins {
+    id 'com.android.library'
+}
+
+android {
+    namespace "com.example.sexyfingers"
+    compileSdk 34
+
+    defaultConfig {
+        minSdk 21
+        targetSdk 34
+    }
+}
+
+dependencies {}
+```
+
+---
+
+# 2. `AndroidManifest.xml`
+
+```xml
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Optional for direct automation in internal builds -->
+    <uses-permission android:name="android.permission.CALL_PHONE"/>
+    <uses-permission android:name="android.permission.SEND_SMS"/>
+
+    <application />
+</manifest>
+```
+
+---
+
+# 3. `SexyFingersPlugin.java`
+
+```java
+package com.example.sexyfingers;
+
+import android.app.Activity;
+import android.content.Intent;
+import android.net.Uri;
+import android.Manifest;
+import android.content.pm.PackageManager;
+import androidx.core.app.ActivityCompat;
+import androidx.core.content.ContextCompat;
+
+import org.godotengine.godot.Godot;
+import org.godotengine.godot.plugin.GodotPlugin;
+import org.godotengine.godot.plugin.UsedByGodot;
+
+import java.util.Arrays;
+import java.util.List;
+
+public class SexyFingersPlugin extends GodotPlugin {
+
+    // ===== Guard Numbers =====
+    private final List<String> guardNumbers = Arrays.asList(
+        "61412345678",
+        "61498765432",
+        "61455511223"
+    );
+
+    public SexyFingersPlugin(Godot godot) {
+        super(godot);
+    }
+
+    @Override
+    public String getPluginName() {
+        return "SexyFingers";
+    }
+
+    private Activity getActivitySafe() {
+        return getActivity();
+    }
+
+    // ===== Public API =====
+    @UsedByGodot
+    public void send(String type, String number, String message) {
+        send(type, number, message, false);
+    }
+
+    @UsedByGodot
+    public void send(String type, String number, String message, boolean direct) {
+        Activity activity = getActivitySafe();
+
+        if(!guardNumbers.contains(number)) {
+            System.out.println("Number not authorized: " + number);
+            return;
+        }
+
+        try {
+            switch(type.toLowerCase()) {
+                case "whatsapp":
+                    openWhatsApp(activity, number, message);
+                    break;
+                case "sms":
+                    if(direct && hasSmsPermission(activity)) {
+                        sendDirectSMS(activity, number, message);
+                    } else {
+                        openSMS(activity, number, message);
+                    }
+                    break;
+                case "share":
+                    shareText(activity, message);
+                    break;
+                case "dialer":
+                    openDialer(activity, number);
+                    break;
+                case "call":
+                    if(direct && hasCallPermission(activity)) {
+                        makeDirectCall(activity, number);
+                    } else {
+                        openDialer(activity, number);
+                    }
+                    break;
+                default:
+                    shareText(activity, message);
+                    break;
+            }
+        } catch(Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    // ===== Helper Methods =====
+    private void shareText(Activity activity, String text) {
+        Intent intent = new Intent(Intent.ACTION_SEND);
+        intent.setType("text/plain");
+        intent.putExtra(Intent.EXTRA_TEXT, text);
+        Intent chooser = Intent.createChooser(intent, "Send via");
+        if(intent.resolveActivity(activity.getPackageManager()) != null) {
+            activity.startActivity(chooser);
+        }
+    }
+
+    private void openSMS(Activity activity, String number, String message) {
+        Intent intent = new Intent(Intent.ACTION_SENDTO);
+        intent.setData(Uri.parse("smsto:" + number));
+        intent.putExtra("sms_body", message);
+        if(intent.resolveActivity(activity.getPackageManager()) != null) {
+            activity.startActivity(intent);
+        }
+    }
+
+    private void sendDirectSMS(Activity activity, String number, String message) {
+        android.telephony.SmsManager sms = android.telephony.SmsManager.getDefault();
+        sms.sendTextMessage(number, null, message, null, null);
+    }
+
+    private void openWhatsApp(Activity activity, String number, String message) {
+        String url = "https://wa.me/" + number + "?text=" + Uri.encode(message);
+        Intent intent = new Intent(Intent.ACTION_VIEW);
+        intent.setData(Uri.parse(url));
+        if(intent.resolveActivity(activity.getPackageManager()) != null) {
+            activity.startActivity(intent);
+        }
+    }
+
+    private void openDialer(Activity activity, String number) {
+        Intent intent = new Intent(Intent.ACTION_DIAL);
+        intent.setData(Uri.parse("tel:" + number));
+        if(intent.resolveActivity(activity.getPackageManager()) != null) {
+            activity.startActivity(intent);
+        }
+    }
+
+    private void makeDirectCall(Activity activity, String number) {
+        Intent intent = new Intent(Intent.ACTION_CALL);
+        intent.setData(Uri.parse("tel:" + number));
+        if(intent.resolveActivity(activity.getPackageManager()) != null) {
+            activity.startActivity(intent);
+        }
+    }
+
+    // ===== Permissions =====
+    private boolean hasCallPermission(Activity activity) {
+        if(ContextCompat.checkSelfPermission(activity, Manifest.permission.CALL_PHONE)
+                != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(activity,
+                    new String[]{Manifest.permission.CALL_PHONE}, 1);
+            return false;
+        }
+        return true;
+    }
+
+    private boolean hasSmsPermission(Activity activity) {
+        if(ContextCompat.checkSelfPermission(activity, Manifest.permission.SEND_SMS)
+                != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(activity,
+                    new String[]{Manifest.permission.SEND_SMS}, 1);
+            return false;
+        }
+        return true;
+    }
+}
+```
+
+---
+
+# 4. Enable Plugin in Godot
+
+* Go to **Project -> Export -> Android**
+* Enable:
+  * Use Gradle Build
+  * Custom Build
+
+Then create/edit `android/plugins.cfg`:
+
+```ini
+[plugin]
+name="SexyFingers"
+binary="SexyFingersPlugin"
+```
+
+---
+
+# 5. GDScript Usage
+
+```gdscript
+if Engine.has_singleton("SexyFingers"):
+    var sf = Engine.get_singleton("SexyFingers")
+
+    # WhatsApp
+    sf.send("whatsapp", "61412345678", "Hello WhatsApp")
+
+    # SMS (open app)
+    sf.send("sms", "61412345678", "Hello SMS")
+
+    # SMS (direct send)
+    sf.send("sms", "61412345678", "Hello SMS", true)
+
+    # Share chooser
+    sf.send("share", "61412345678", "Hello from SexyFingers!")
+
+    # Open dialer
+    sf.send("dialer", "61412345678", "")
+
+    # Direct call
+    sf.send("call", "61412345678", "", true)
+
+    # Unauthorized number — silently blocked
+    sf.send("sms", "99999999999", "This won't send")
+```
+
+---
+
+# 6. GDScript Agent Wrapper
+
+```gdscript
+# SexyFingers.gd - Singleton for Agents
+extends Node
+
+var sf = null
+var guard_numbers = [
+    "61412345678",
+    "61498765432",
+    "61455511223"
+]
+
+func _ready():
+    if Engine.has_singleton("SexyFingers"):
+        sf = Engine.get_singleton("SexyFingers")
+
+func send_to_guard(type: String, number: String, message: String, direct: bool = false):
+    if not number in guard_numbers:
+        print("Unauthorized number")
+        return
+    sf.send(type, number, message, direct)
+
+func send_by_role(role: String, type: String, message: String, direct: bool = false):
+    var role_map = {
+        "security": "61412345678",
+        "emergency": "61498765432",
+        "admin": "61455511223"
+    }
+    if role in role_map:
+        send_to_guard(type, role_map[role], message, direct)
+```
+
+---
+
+# Notes
+
+* Number format: country code + digits, no `+` or spaces (e.g. `614XXXXXXXX`)
+* Guard numbers enforced — unauthorized numbers are silently blocked
+* `direct=false` (default) is Play Store safe — user always confirms
+* `direct=true` requires CALL_PHONE and/or SEND_SMS runtime permissions
+* All intents checked with resolveActivity() to prevent crashes
+* Fallback: unknown type defaults to share chooser
+
+---
+
+# Build & Export
+
+1. Install Android build template (Godot)
+2. Plug in phone or use emulator
+3. Export APK / AAB
